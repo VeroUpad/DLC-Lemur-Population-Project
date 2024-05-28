@@ -1,0 +1,632 @@
+---
+title: "Final Paper"
+author: "STOR 320.02 Group 4"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+    theme: united
+    css: |
+      #TOC {
+        color: lightblue
+      }
+      a {
+        color: lightblue; /* Light blue color for all links */
+      }
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(kableExtra)
+library(htmltools)
+library(tmap)
+library(mapview)
+library(sf)
+library(tidygeocoder)
+library(caret)
+library(car)
+library(modelr)
+library(purrr)
+library(broom)
+library(gridExtra)
+
+lemur <- read_csv("March 17 Cleaned Data (with DOD).csv")
+final.lemur <- read_csv("March 17 Cleaned Data (with DOD).csv")
+original <- read_csv("LemurData/lemur_data.csv")
+lat_longs <- read_csv("Geocoding.csv", col_types = cols())
+```
+
+# INTRODUCTION
+
+> Lemurs, among the most endangered and threatened species worldwide, have found a home at The Duke Lemur Center. Since the 1960s, the institution has been collecting data on lemurs, with the goal of maximizing our knowledge on the species and preserving their lives. With all of this information dating back decades, we aimed to predict ways to extend their lifespans. Lemurs play a pivotal role in their environments as both pollinators and seed dispersers. Without them, trees would lose the means to disperse their seeds, ultimately leading to the extinction of the tree species themselves. Our work has delved into a variety of lemur traits and investigated their potential as predictors of a lemur's lifespan and reproductive success. All our efforts have been dedicated to the preservation, nurturing, and saving of the lemur species. 
+
+## Question 1:
+
+> Extending the lifespan of lemurs is a vital aspect of their preservation. To study this we have looked into the question: **what combination of biological markers and demographic traits that could serve as predictors of lemur lifespan?** The markers and traits we took into consideration include the sex of a lemur, birth month, number of offspring, weight, parental background (wild or non-wild), and their birth location (whether they live at the Duke Lemur Center or elsewhere). Sex, birth month, and parental background are genetic factors associated with longevity, while weight can reflect overall nutritional status. Additionally, birth location provides insight into how contrasting habitats may impact lifespan. This comprehensive approach sets an acceptable foundation for understanding lemur lifespans.  
+
+## Question 2:
+
+> In addition to finding ways to extend the lifespan of lemurs, encouraging higher reproduction rates among lemurs is another way to nurture and grow the lemur population. In our work, we studied the question: **what combination of biological markers and demographic traits are appropriate predictors for the amount of offspring a lemur will give birth to in their lifetime?** Similar to our first question, we studied lemurs and their sex, birth season, weight, parental background, habitat lication, and lifespan. To ensure our study only included lemurs that have reached the age of reproduction, we removed all lemurs under the age of two. This approach allows us to delve deeper into understanding the factors influencing lemur reproduction and contributes to our overarching goal of preserving and safeguarding these remarkable creatures for future generations. 
+
+```{r, echo=F}
+final.lemur_2 <- final.lemur %>%
+  filter(!is.na(Dam_ID) & !is.na(Sire_ID)) %>%
+  mutate(Wildness = ifelse((Dam_ID == "WILD" | Sire_ID == "WILD"), "Wild Parents", "Non-Wild Parents")) %>%
+  mutate(AtDukeCenter = ifelse(Birth_Institution == "Duke Lemur Center", 1, 0)) %>%
+  rename(lifespan = AgeMax_LiveOrDead_y) %>%
+  filter(!is.na(N_known_offspring)) %>%
+  select(-c(DLC_ID, Dam_ID, Sire_ID, Weight_Date, DOB, DOD, AgeAtDeath_y, Birth_Season, Birth_Institution, Litter_Size, Taxon))
+view(final.lemur_2)
+```
+
+# DATA
+
+> We used data from the Duke Lemur Center, founded in 1966 on Duke University's campus in Durham, North Carolina. Their study focuses on lemur protection and care, guided by a mission statement, “to advance science, scholarship, and biological conservation through non-invasive research, community-based conservation, and public outreach and education.”  Our data was originally recorded by researchers at the Duke Lemur Center in Durham, North Carolina at Duke University, but the dataset we used was found on Kaggle and taken from the Center’s 2019 release. The dataset contains over 80,000 entries which translates to a sample of about 3,500 individual lemurs across 14 different species and 25 different taxa residing at the Duke Lemur Center from the year 1946 to 2018. Each lemur in the dataset is identified by a unique **DLC_ID** variable. In addition to this identifier, the dataset includes information on taxon, sex, date of birth, weight, birth institution, litter size, number of known offspring, maximum age, and wildness status ([Duke Lemur Center, 2021](https://lemur.duke.edu/discover/meet-the-lemurs/)).
+
+> The **Taxon** variable in our dataset represents the taxonomic code of each lemur, typically an abbreviation of the lemur's Latin name. This code consists of the first letter of the genus and the first three letters of the species, with variations for subspecies and hybrids. For example, LCAT is the taxonomic code corresponding to the Ring-tailed lemur, or lemur catta. A complete list of the taxonomic codes and associated Latin and common names can be found on Kaggle. As mentioned previously, lemurs are among the most threatened groups of mammals in the world. According to the Lemur Conservation Network, 98% of lemur species are classified as endangered ([Lemur Conservation Network, 2024](https://www.lemurconservationnetwork.org/learn/the-iucn-red-list-and-lemurs/)). The “Red List” of endangered lemurs includes the critically endangered black and white ruffed lemur (code VVV), red ruffed lemur (code VRUB), and mongoose lemur (code EMON) which among many other have been housed at Duke Lemur Center. Assigning taxon codes to each lemur at Duke Lemur Center can therefore be helpful in monitoring the health and behavior of endangered lemur species in particular. Seen below is the list of taxons that can be seen in the dataset and what the abbreviations stand for. Any taxon with a star next to its name represents an endangered species. The **Sex** variable indicates whether the focal lemur is male, female, or not determined, “M”, “F”, and “ND” respectively. The male-female split is nearly 50-50 with 51% male and 49% female, with only 15 observations marked as “ND”. The **DOB** variable in our dataset represents the date of birth for each lemur housed at the Duke Lemur Center. In most cases, this date is exact, but for certain lemurs, particularly those that were wild-caught, the date may be estimated and indicated by a 'Y' in the **Estimated_DOB** variable. Birth dates are recorded in the YYYY-MM-DD format in the original dataset.
+
+```{r, echo=F, message = F, fig.align='center'}
+TaxonCounts = original %>% group_by(DLC_ID, Taxon) %>%
+  summarize(Count = n()) %>%
+  ungroup() %>%
+  select(Taxon) %>%
+  group_by(Taxon) %>%
+  summarize(Count = n()) %>%
+  ungroup() %>%
+  arrange(desc(Count))
+
+endangered = TaxonCounts %>%
+  mutate(Taxon = str_replace_all(Taxon, "DMAD", "DMAD*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "ECOL", "ECOL*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "ECOR", "ECOR*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "EFLA", "EFLA*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "EFUL", "EFUL*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "EMON", "EMON*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "ERUB", "ERUB*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "ESAN", "ESAN*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "HGG", "HGG*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "LCAT", "LCAT*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "PCOQ", "PCOQ*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "VRUB", "VRUB*")) %>%
+  mutate(Taxon = str_replace_all(Taxon, "VVV", "VVV*"))
+
+
+kable(endangered, caption = "Count of Unique Lemurs per Taxon at Duke Lemur Center") %>%
+  kable_styling("striped") %>%
+  add_footnote("* denotes endangered Taxon", notation = "none") %>%
+  column_spec(1, bold = TRUE, color = "coral4", width = "10em", border_right = TRUE) %>%
+  column_spec(2, width = "60em") %>% # Adjust column width and padding
+  row_spec(0, bold = TRUE, color = "white", background = "coral4")
+```
+
+
+> One of the initiatives taken by researchers at Duke Lemur Center is to weigh each lemur living in the Center on a regular basis. The **Weight_g** variable is the lemur’s weight in grams for one particular measurement at a point in time. For smaller lemurs under 500 grams, this measurement is to the nearest 0.1-1 grams while for lemurs weighing over 500 grams, this measurement is to the nearest 1-20 grams. The exact date in YYYY-MM-DD format on which a particular lemur was weighed is stored in the **Weight_Date** variable. There are multiple variables that could indicate the age of a lemur (**AgeAtDeath_y**, **AgeOfLiving_y**, and **AgeLastVerified_y**). The **AgeMax_LiveOrDead_y** variable selects the maximum age from these variables for each lemur, representing the potential maximum age the lemur could have reached. In other words, if a lemur’s date of death was not recorded, but it had a date in one of the other categories, the last recorded date the lemur was alive would fill into the **AgeMax_LiveOrDead_y** variable. For populations of endangered animals, estimating life span can be extremely important in management and conservation, as it can be used to understand which populations are viable ([Mayne et al., 2019](https://doi.org/10.1038/s41598-019-54447-w)). When available, data was taken on the parents of each lemur at the Duke Lemur Center. The **Dam_ID** variable is an identifier for the female parent of the focal lemur, and the **Sire_ID** variable is an identifier for the male parent. If a parent lemur has a unique **DLC_ID** code, this code will be used as the identifier. For lemurs whose parents were wild-caught, this is indicated by the label **WILD**.
+
+
+```{r, include = F, warning=F, echo=F}
+final.lemur %>%
+  distinct(DLC_ID, .keep_all = TRUE) %>%
+  filter(!is.na(Dam_ID) & !is.na(Sire_ID)) %>%
+  mutate(Wildness = ifelse((Dam_ID == "WILD" | Sire_ID == "WILD"), "Wild Parents", "Non-Wild Parents")) %>%
+  rename(lifespan = AgeMax_LiveOrDead_y) %>%
+  group_by(DLC_ID, Wildness, lifespan) %>%
+  ggplot(aes(x=lifespan, fill = Wildness)) +
+  geom_histogram(position = "stack", alpha = 0.5, bins = 40) +
+  labs(title = "Histogram Showing Lifespan of Lemurs With and Without a Wild Parent", 
+       x= "Lifespan (Years)", 
+       y= "Count") +
+  theme_bw()
+```
+
+> One variable our group found particularly interesting in our dataset was the Birth Institution of each lemur, named **Birth_Institution**. Specifically, we were interested in how the geographic location a lemur was born at and the associated environmental conditions might play into its biological patterns like reproduction. While we ultimately did not choose to include the Birth Institution variable in our models, it is still informative to see a visual distribution of where lemurs living at Duke Lemur Center over the years originally came from. The following map depicts where the birth institutions of each lemur in the dataset over the years are located geographically. The size of the symbol associated with each institution on the map corresponds to the number of lemurs born at that respective institution. As seen by the large circle in Durham, NC, the overwhelming majority of lemurs from the dataset were born at the Duke Lemur Center; however, a significant number of lemurs were also born in the wild in Madagascar. Any lemur with a birth institution that is simply a country name was wild caught in that country. Interestingly, most of the lemurs at Duke Lemur Center originated in countries in the Northern Hemisphere, specifically in the United States.
+
+```{r, message=F, warning=F, echo=F, fig.width=10, fig.height=8}
+spatial_institutions <- st_as_sf(lat_longs, coords = c('longitude', 'latitude'))
+count_map <- final.lemur %>%
+  distinct(DLC_ID, .keep_all = TRUE) %>%
+  group_by(DLC_ID, Birth_Institution) %>%
+  summarize() %>%
+  ungroup() %>%
+  group_by(Birth_Institution) %>%
+  summarize(count = n()) %>%
+  left_join(spatial_institutions, join_by(Birth_Institution == name)) %>%
+  st_as_sf()
+
+tmap_mode("view")
+tm_shape(count_map) +
+  tm_dots(size = "count")
+```
+
+> The **Litter_Size** variable contains the number of infants the focal lemur was born into, including the focal lemur. It’s important to note that this number is only known if the focal lemur was born at the Duke Lemur Center; otherwise, if a lemur was wild caught or the litter size is not verified, it will be marked with a missing value. It’s also worth distinguishing **Litter_Size** from **Known offspring** which we also used in our project. **N_known_offspring** is the number of offspring the focal lemur is known to have produced. If a lemur was caught in the wild or came from another institution, it’s possible that the lemur has additional offspring that are unaccounted for in this variable. Tracking the number of offspring produced by certain lemur species has been shown to be particularly valuable in monitoring the genetic diversity of lemurs living in captivity. For example, altered living conditions and changes in resource availability associated with captivity have been shown to impact infant mortality and litter size in captive black and white ruffed lemurs, as litters of a certain size tend to have higher infant survivorship ([Schwitzer & Werner, 2009](https://www.int-res.com/articles/esr2009/8/n008p201.pdf)). Therefore, breeding programs like the one at Duke Lemur Center could benefit from monitoring the number of offspring produced by its lemurs, as this variable can have implications for infant mortality and overall preservation of lemur genetic diversity–which is one of the primary objectives of the Center. 
+
+> Overall, this Duke Lemur Center dataset contains a broad range of information including physiological and demographic variables that are vital in understanding lemur populations. The predictors we chose to focus on from the original KAggle dataset were taxon, sex, date of birth, weight, litter size, number of known offspring, maximum age, and wild parent status. Based on the information contained in this dataset discussed previously, our group aimed to construct models that would contribute to Duke Lemur Center’s mission of advancing conservation of endangered lemur species.
+
+# RESULTS
+
+## Question 1
+
+> In our analysis of Question 1, we focused on identifying key factors influencing lemur lifespan and building the best predictive model. We curated variables to include crucial biological and demographic influences, omitting unique identifiers, **DLC_ID**, and dates prone to overfitting, like **Birth_Date**. Variables like **Birth_Month** and **Litter_Size** were removed because of redundancy; certain variables, like if the lemur had a wild parent (**Wildness**) and whether the lemur was born at the Duke Lemur Center (**AtDukeCenter**) were converted to binary format to quantify early-life environment impacts. We calculated average weight of a lemur (**Weight**) and how that weight changes over time (**Weight_change**) for each lemur across multiple observations. Our model-building process began with an empty baseline model, progressively adding predictors and observing a decrease in Mean Average Error (MAE). Notably, variables like **Weight_change**, **Birth_Season**, **AtDukeCenter**, and **Sex** showed low p-values, leading to a streamlined model focusing on these four variables. Backward elimination resulted in a six-variable model, but a direct comparison favored the four-variable model (Mod_four), with the formula: **lifespan ~ Taxon + Weight + Offspring + Wildness**. Applying a logarithmic transformation to weight minimized MAE. We also tested interaction terms, particularly exploring how **Taxon** and **Offspring**, as well as **Taxon** and **Wildness**, might jointly influence predictions to enhance model accuracy. 
+Below are our models for Question 1:
+
+
+```{r, include =F, echo = F}
+###original chunk
+lemur$weight_change <- original$Avg_Daily_WtChange_g
+lemur$age_at_weight <- original$AgeAtWt_d
+lemur2 <- lemur %>% group_by(DLC_ID) %>%
+  mutate(average_weight = mean(Weight_g))
+
+###lemur 2 chunk
+lemur2 <- lemur2 %>%
+  mutate(weight_change = ifelse(is.na(weight_change), Weight_g / (age_at_weight +1) , weight_change))
+
+lemur2 <- lemur2 %>%
+  group_by(DLC_ID) %>%
+  mutate(average_weight_change = mean(weight_change))%>%
+  ungroup()
+lemur2 <- lemur2 %>%
+  filter(!is.na(Dam_ID) & !is.na(Sire_ID)) %>%
+  mutate(Wildness = ifelse((Dam_ID == "WILD" | Sire_ID == "WILD"), "Wild Parents", "Non-Wild Parents")) %>%
+  mutate(AtDukeCenter = ifelse(Birth_Institution == "Duke Lemur Center", "Duke", "Not Duke")) %>%
+  rename(lifespan = AgeMax_LiveOrDead_y) %>%
+  rename(Offspring = N_known_offspring)%>%
+  filter(!is.na(Offspring)) 
+
+lemur2 <- lemur2 %>%
+  rename(Weight = average_weight, Weight_change = average_weight_change) %>%
+  distinct(DLC_ID, .keep_all = TRUE)
+
+cleaned_lemur <- lemur2 %>%
+  select(-c(DOB, DOD, Birth_Month, Birth_Institution, Litter_Size, Dam_ID, Sire_ID, Weight_g, Weight_Date, AgeAtDeath_y, weight_change, age_at_weight)) %>%
+  select(!DLC_ID)
+```
+
+```{r, echo = F, fig.align='center'}
+dfmodel <- data.frame(
+Models <- c("Empty Model", 
+            "Full Model", 
+            "Mod_four",
+            "Mod_six", 
+            "Log_mod",
+            "Int_mod1",
+            "Int_mod2"),
+Details <- c("lifespan ~ 1", 
+             "lifespan ~ Sex + Birth_Season + Offspring + Weight + Weight_change + Wildness + AtDukeCenter + Birth_Season",
+             "lifespan ~ Taxon + Weight + Offspring + Wildness",
+             "lifespan ~ Taxon + Offspring + Weight + Wildness + AtDukeCenter + Sex",
+             "lifespan ~ Taxon + log(Weight) + Offspring + Wildness",
+             "lifespan ~ Taxon + Offspring + log(Weight) + Wildness + Taxon * Offspring",
+             "lifespan ~  Taxon + log(Weight) + Offspring + Wildness + Taxon * Wildness + Taxon * Offspring")
+)
+
+dfmodel %>%
+  kbl(col.names = c("Model", "Details"), 
+      longtable = TRUE, 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, 
+                position = "center",
+                font_size = 12) %>% # Increase the font size for readability
+  column_spec(1, bold = TRUE, color = "coral4", width = "10em", border_right = TRUE) %>%
+  column_spec(2, width = "60em") %>% # Adjust column width and padding
+  row_spec(0, bold = TRUE, color = "white", background = "coral4")
+```
+
+```{r, include =F, echo =F}
+#Q1 models
+#Empty Model
+Empty = lm(lifespan~1, data = cleaned_lemur)
+summary(Empty)
+
+#Full Model
+Full = lm(lifespan~., data = cleaned_lemur)
+summary(Full)
+
+#Mod1 - Reduced Model
+Mod_four = lm(lifespan~ Taxon + Weight + Offspring + Wildness, data = cleaned_lemur)
+summary(Mod_four)
+
+#Mod2 - Backward Elimination
+MSE <- (summary(Full)$sigma)^2
+Mod_six <- step(Empty, scope = list(upper = Full), scale = MSE, trace = FALSE)
+summary(Mod_six)
+
+#log transformation
+log_mod <- lm(lifespan ~ Taxon + Sex + Offspring + log(Weight), data = cleaned_lemur)
+summary(log_mod)
+
+#Interaction 1
+Int_mod1 <- lm(lifespan ~ Taxon + Offspring + log(Weight) + Wildness + Taxon * Offspring, data = cleaned_lemur)
+summary(Int_mod1)
+
+#Interaction
+Int_mod2 = lm(lifespan ~  Taxon + log(Weight) + Offspring + Wildness + Taxon * Wildness + Taxon * Offspring, data = cleaned_lemur)
+summary(Int_mod2)
+
+average_lifespan <- mean(cleaned_lemur$lifespan, na.rm = TRUE)
+print(average_lifespan)
+```
+
+> To evaluate the performance of our models, we utilized cross-validation to compute the MAE for each. This method enhances the robustness of our evaluation by systematically dividing the data into multiple training and testing subsets. Through this approach, each data point serves both as a part of the training set and the testing set in different iterations, which enhances the reliability and generalizability of our findings. Upon reviewing the MAE values across our models, as seen in the top bar graph below, we noted that most hovered around an MAE of 5, with the exception of the empty model. Given that the average lifespan of lemurs is about 15 years, an MAE value of approximately 5 indicates that our models’ predictions deviate from actual lifespan values by an average of 5 years. Although the Int2 emerged as the "best" model with the lowest MAE of roughly 4.9, the marginal improvement of 0.1 years is inconsequential in the broader context of a 15-year average lifespan. This minimal variance in MAE across all non-empty models suggests that, despite our systematic efforts, we have not achieved significantly distinct models in terms of predictive accuracy. Thus, all models essentially perform comparably except for the empty model.
+
+
+```{r, warning = FALSE, echo=FALSE, fig.align='center'}
+MAE_func <- function(actual, predicted) {
+  mean(abs(actual - predicted))
+}
+
+cross_validate_model <- function(formula, data, folds) {
+  cv_results <- vector("list", folds)
+
+  set.seed(213)
+  folds <- createFolds(data$lifespan, k = folds, list = TRUE, returnTrain = TRUE)
+  
+  for(i in seq_along(folds)) {
+    train_indices <- folds[[i]]
+    train_data <- data[train_indices, ]
+    test_data <- data[-train_indices, ]
+    
+    fitted_model <- lm(formula, data = train_data)
+    
+    predictions <- predict(fitted_model, newdata = test_data)
+    
+    cv_results[[i]] <- MAE_func(test_data$lifespan, predictions)
+  }
+  mean(unlist(cv_results))
+}
+
+model_formulas1 <- list(
+  Empty = lifespan ~ 1,
+  Full = lifespan ~ .,
+  Mod1 = lifespan ~ Taxon + Offspring + Weight + Wildness,
+  Mod2 = lifespan ~ Taxon + Offspring + Weight + Wildness + AtDukeCenter + Sex,
+  Log_Mod = lifespan ~ log(Weight) + Taxon + Offspring + Wildness,
+  Int1 = lifespan ~ Taxon + Offspring + Taxon * Offspring + log(Weight) + Wildness,
+  Int2 = lifespan ~  Taxon + log(Weight)  + Offspring + Wildness + Taxon * Wildness + Taxon * Offspring)
+
+
+mae_results <- sapply(model_formulas1, cross_validate_model, data = cleaned_lemur, folds = 10)
+names(mae_results) <- c("Empty", "Full", "Mod_four", "Mod_six", "Log_mod", "Int1", "Int2")
+
+
+MAE <- tibble(Model = names(mae_results), MAE_Results = mae_results)
+MAE <- MAE %>%
+  mutate(MAE_Results = round(MAE_Results, 2))
+
+MAE$Model <- factor(MAE$Model, levels = MAE$Model[order(MAE$MAE_Results)])
+
+ggplot(data = MAE, mapping = aes(x = Model, y = MAE_Results)) +  
+  geom_bar(stat = "identity", mapping = aes(fill = Model), show.legend = FALSE) +
+  geom_text(aes(label = MAE_Results), vjust = -0.5, color = "black", size = 3.5) +  # Size increased for better visibility
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, max(MAE$MAE_Results) * 1.5) +  # Adjust the upper limit to be 10% higher than max MAE for better layout
+  labs(x = "Model", y = "MAE", title = "Question 1 MAE Model Results", fill = "Model")
+```
+
+> Since we observed little variation among the models, as depicted in the top figure. Consequently, we decided to identify which specific variable contributed to the reduction in MAE from 6 to around 5. To this end, we constructed four separate regression models, each incorporating only one variable from our "Mod_four" model. Our objective was to determine which variable significantly influences the reduction in MAE, thereby identifying the most crucial predictor. In the table below we show the one-variable predictor models we built. Underneath that table, you can see the bar graph showing the MAE of each individual variable predictor model. We found the one featured **Taxon** as the sole predictor emerged with the lowest MAE value of 5.3, suggesting **Taxon** is the most significant determinant of lifespan among all the variables we considered. This finding underscores the critical influence that biological classification has on the lifespan variability of lemurs, positioning **Taxon** as a pivotal factor in our predictive modeling efforts.
+
+```{r, echo = F, fig.align='center'}
+dfmodel <- data.frame(
+Models <- c("Empty Model", 
+            "Taxon_mod",
+            "Offspring_mod", 
+            "Weight_mod",
+            "Wildness_mod"),
+Details <- c("lifespan ~ 1",
+             "lifespan ~ Taxon",
+             "lifespan ~ Offspring",
+             "lifespan ~ Weight",
+             "lifespan ~ Wildness")
+)
+
+dfmodel %>%
+  kbl(col.names = c("Model", "Details"), 
+      longtable = TRUE, 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, 
+                position = "center",
+                font_size = 12) %>% # Increase the font size for readability
+  column_spec(1, bold = TRUE, color = "coral4", width = "10em", border_right = TRUE) %>%
+  column_spec(2, width = "37em") %>% # Adjust column width and padding
+  row_spec(0, bold = TRUE, color = "white", background = "coral4")
+
+model_formulas1 <- list(
+  Empty = lifespan ~ 1,
+  Taxon_mod = lifespan ~ Taxon,
+  Offspring_mod = lifespan ~ Offspring,
+  Weight_mod = lifespan ~ Weight,
+  Wildness_mod = lifespan ~ Wildness)
+
+mae_results <- sapply(model_formulas1, cross_validate_model, data = cleaned_lemur, folds = 10)
+names(mae_results) <- c("Empty", "Taxon_mod", "Offspring_mod", "Weight_mod", "Wildness_mod")
+
+
+MAE <- tibble(Model = names(mae_results), MAE_Results = mae_results)
+MAE <- MAE %>%
+  mutate(MAE_Results = round(MAE_Results, 2))
+
+MAE$Model <- factor(MAE$Model, levels = MAE$Model[order(MAE$MAE_Results)])
+
+ggplot(data = MAE, mapping = aes(x = Model, y = MAE_Results)) +  
+  geom_bar(stat = "identity", mapping = aes(fill = Model), show.legend = FALSE) +
+  geom_text(aes(label = MAE_Results), vjust = -0.5, color = "black", size = 3.5) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, max(MAE$MAE_Results) * 1.5) +  
+  labs(x = "Model", y = "MAE", title = "Question 1 MAE Individual Variable Model Results", fill = "Model")
+```
+
+
+## Question 2
+
+```{r, echo=F, include=F}
+cleaned_lemur_2 <- cleaned_lemur %>% filter(Offspring >= 2)
+
+##models
+#Empty Model
+none <- lm(Offspring ~ 1, data = cleaned_lemur_2)
+summary(none)
+
+#Full Model
+full <- lm(Offspring ~ ., data = cleaned_lemur_2)
+summary(full)
+
+#Model Selection
+MSE <- (summary(full)$sigma)^2
+model <- step(none, scope = list(upper = full), scale = MSE, trace = FALSE)
+summary(model)
+
+#Log Model
+model_log <- lm(Offspring ~ log(lifespan) + Taxon + Wildness + log(Weight), data = cleaned_lemur_2)
+summary(model_log)
+
+#Sqrt Model
+model_sqrt <- lm(sqrt(Offspring) ~ sqrt(lifespan) + Taxon + Wildness +sqrt(Weight), data = cleaned_lemur_2)
+summary(model_sqrt)
+
+#Sqrt Squared Model
+model_sqrt2 <- lm(sqrt(Offspring) ~ (sqrt(lifespan) + Taxon + Wildness +sqrt(Weight))^2, data = cleaned_lemur_2)
+summary(model_sqrt2)
+
+#Log Offspring Squared
+model_log2 <- lm(formula = log(Offspring) ~ (lifespan + Taxon + Wildness + Weight)^2, 
+    data = cleaned_lemur_2)
+summary(model_log2)
+
+#Log Squared Model 
+model_log3 <- lm(Offspring ~ (log(lifespan) + log(Weight) + Taxon + Wildness)^2,
+             data = cleaned_lemur_2)
+summary(model_log3)
+
+#Life Interaction
+life <- lm(formula = log(Offspring) ~ I(lifespan)^2 + Taxon*lifespan + Wildness*lifespan + Weight*lifespan, 
+    data = cleaned_lemur_2)
+summary(life)
+```
+
+
+> The question we are aiming to answer is "What combination of  biological markers and demographic traits are appropriate predictors for the amount of offspring a lemur gives birth to in their lifetime?" The process of choosing the predictors is to start with finding variables that attribute to their biological markers and demographic traits. In our data set, there are multiple observations for each lemur since they were weighed multiple times through their lifetime. According to the Perret Martine and Anzeraey Aude, lemurs start having offspring around the age of 18 months and can reproduce until their death ([Martine & Aude, 2022](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9799291)). With this information, we decided to take the average weight of each lemur since each lemur was weighed throughout their entire life from close to birth to weeks or months before death. We also took the weight change of each lemur throughout their lifetime by doing the average of weight changes between each time interval its weight was taken. We wanted to make sure we only used lemurs that have already had all their offspring. According to Peter Kappeler and his research on lemur reproduction, the average age of last reproduction occur around 7 years with an error of around 5 years thus we removed all lemurs that were younger than 2 to ensure all lemurs we are observing have reached full reproduction potential ([Kappeler et al., 2022](https://www.frontiersin.org/articles/10.3389/fevo.2022.894344)). The variable predictors we decided on are: **Taxon**, **Sex**, **Birth Season**, **Lifespan**, **Weight**, **Weight_change**, **Wildness**, and lastly **AtDukeLemurCenter**. To select our model, we used the stepwise model selection method to choose the best model based on Akaike Information Criterion. We started with an empty model and the full model with all the predictors. The selected model from the stepwise selection method had the predictors of **lifespan**, **Taxon**, **Wildness**, and **Weight**. Based off of this model, we made other models transformations and interactions to attempt to capture potentially nonlinear relationships and interaction effects in the data. The models we made are the following:
+
+```{r, echo=F}
+dfmodel <- data.frame(
+Models <- c("Empty", "Full", "Selected Model", "Log Model 1", "Log Model 2","Sqrt Model 1", "Sqrt Model 2",
+            "Log of Offspring Model", "Lifespan Model"),
+Details <- c("Offspring ~ 1",
+  "Offspring ~ Taxon + lifespan + Wildness + Weight + Weight_Change + AtDukeCenter + Birth_Month",
+  "Offspring ~ Taxon + lifespan + Wildness + Weight",
+  "Offspring ~ log(lifespan) + Taxon + Wildness + log(Weight)",
+  "Offspring ~ (log(lifespan) + log(Weight) + Taxon + Wildness)^2",
+  "sqrt(Offspring) ~ sqrt(lifespan) + Taxon + Wildness +sqrt(Weight)",
+  "sqrt(Offspring) ~ (sqrt(lifespan) + Taxon + Wildness +sqrt(Weight))^2",
+  "log(Offspring) ~ (lifespan + Taxon + Wildness + Weight)^2",
+  "log(Offspring) ~ I(lifespan)^2 + Taxon*lifespan + Wildness*lifespan + Weight*lifespan"))
+
+
+dfmodel %>%
+  kbl(col.names = c("Model", "Details"), 
+      longtable = TRUE, 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE, 
+                position = "left",
+                font_size = 12) %>% # Increase the font size for readability
+  column_spec(1, bold = TRUE, color = "coral4", width = "10em", border_right = TRUE) %>%
+  column_spec(2, width = "60em") %>% # Adjust column width and padding
+  row_spec(0, bold = TRUE, color = "white", background = "coral4")
+```
+
+> To check how our models performed, we found the Mean Absolute Error (MAE) of each model through cross-validation. The cross-validation method ensures robustness by repeatedly partitioning the data into training and testing sets, fitting the model on the training data, and then evaluating its performance on the unseen testing data. Through our evaluation of the MAE of each model, the "Log Model", which took the log of lifespan and weight performed the best. In examining our data set on lemur offspring, we find that the average number of offspring per lemur stands at 6, ranging from a minimum of 1 to a maximum of 36. Our MAE hovering around 9 suggests that our predicted number of offspring typically deviates by approximately 9 units from the actual count. When comparing the models we made and the empty model, we found that there was almost to no difference between the models we made and the empty model. There is only a 0.30 difference between the MAE of our "Log Model" and the "Empty Model" which is not significant enough in terms of offspring since there is not even an entire offspring difference. This substantial disparity may be attributed to the broad spectrum of offspring counts, coupled with the presence of outliers, which could be exerting undue influence on our calculations. 
+
+
+```{r, warning=F, echo=FALSE, message=F, fig.align='center'}
+MAE_func <- function(actual, predicted) {
+  mean(abs(actual - predicted))
+}
+
+cross_validate_model1 <- function(formula, data, folds) {
+  cv_results <- vector("list", folds)
+
+  set.seed(213)
+  folds <- createFolds(data$lifespan, k = folds, list = TRUE, returnTrain = TRUE)
+  
+  for(i in seq_along(folds)) {
+    train_indices <- folds[[i]]
+    train_data <- data[train_indices, ]
+    test_data <- data[-train_indices, ]
+    
+    fitted_model <- lm(formula, data = train_data)
+    
+    predictions <- predict(fitted_model, newdata = test_data)
+    
+    cv_results[[i]] <- MAE_func(test_data$lifespan, predictions)
+  }
+  mean(unlist(cv_results))
+}
+
+cross_validate_model2 <- function(formula, data, folds) {
+  cv_results <- vector("list", folds)
+
+  set.seed(213)
+  folds <- createFolds(data$lifespan, k = folds, list = TRUE, returnTrain = TRUE)
+  
+  for(i in seq_along(folds)) {
+    train_indices <- folds[[i]]
+    train_data <- data[train_indices, ]
+    test_data <- data[-train_indices, ]
+    
+    fitted_model <- lm(formula, data = train_data)
+    
+    predictions <- (predict(fitted_model, newdata = test_data))^2
+    
+    cv_results[[i]] <- MAE_func(test_data$lifespan, predictions)
+  }
+  mean(unlist(cv_results))
+}
+
+cross_validate_model3 <- function(formula, data, folds) {
+  cv_results <- vector("list", folds)
+
+  set.seed(213)
+  folds <- createFolds(data$lifespan, k = folds, list = TRUE, returnTrain = TRUE)
+  
+  for(i in seq_along(folds)) {
+    train_indices <- folds[[i]]
+    train_data <- data[train_indices, ]
+    test_data <- data[-train_indices, ]
+    
+    fitted_model <- lm(formula, data = train_data)
+    
+    predictions <- exp(predict(fitted_model, newdata = test_data))
+    
+    cv_results[[i]] <- MAE_func(test_data$lifespan, predictions)
+  }
+  mean(unlist(cv_results))
+}
+
+model_formulas1 <- list(
+  Empty = Offspring ~ 1,
+  Full = Offspring ~ .,
+  Mod1 = Offspring ~ Taxon + lifespan + Wildness + Weight,
+  Log_Mod1 = Offspring ~ log(lifespan) + Taxon + Wildness + log(Weight),
+  log_mod3 = Offspring ~ (log(lifespan) + log(Weight) + Taxon + Wildness)^2)
+
+model_formulas2 <- list(
+  Sqrt_Mod = sqrt(Offspring) ~ sqrt(lifespan) + Taxon + Wildness +sqrt(Weight),
+  Sqrt_Mod2  = sqrt(Offspring) ~ (sqrt(lifespan) + Taxon + Wildness +sqrt(Weight))^2
+)
+
+model_formulas3 <- list(
+  Log_Mod2 = log(Offspring) ~ (lifespan + Taxon + Wildness + Weight)^2,
+  lifespan_int = log(Offspring) ~ I(lifespan)^2 + Taxon*lifespan + Wildness*lifespan + Weight*lifespan)
+
+
+mae_results1 <- sapply(model_formulas1, cross_validate_model1, data = cleaned_lemur_2, folds = 10)
+
+names(mae_results1) <- c("Empty", "Full", "Selected Model", "Log Model 1", "Log Model 2")
+mae_results2 <- sapply(model_formulas2, cross_validate_model2, data = cleaned_lemur_2, folds = 10)
+names(mae_results2) <- c("Sqrt Model 1", "Sqrt Model 2")
+mae_results3 <- sapply(model_formulas3, cross_validate_model3, data = cleaned_lemur_2, folds = 10)
+names(mae_results3) <- c("Log of Offspring Model", "Lifespan Model")
+
+MAE1 <- tibble(Model = names(mae_results1), Results = mae_results1)
+MAE2 <- tibble(Model = names(mae_results2), Results = mae_results2)
+MAE3 <- tibble(Model = names(mae_results3), Results = mae_results3)
+
+MAE <- rbind(MAE1, MAE2, MAE3)
+MAE <- MAE %>%
+  mutate(Results = format(Results, scientific = FALSE))
+MAE$Model <- factor(MAE$Model, levels = MAE$Model[order(MAE$Results)])
+MAE$Results <- round(as.numeric(MAE$Results),2)
+options(pillar.sigfig = 9)  # Set the number of significant digits
+
+ggplot(data = MAE, mapping = aes(x = Model, y = Results)) +  
+  geom_bar(stat = "identity", mapping = aes(fill = Model), show.legend = FALSE) +
+  geom_text(aes(label = Results), vjust = -0.5, color = "black", size = 3) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, 15) +
+  labs(x = "Model", y = "MAE", title = "Question 2 MAE Model Results", fill = "Model") 
+```
+
+
+> Although there was not much difference between our models and the empty model, we wanted to see which predictor had the most influence on our response variable of number of offspring. We made the variable of importance plot by taking the standardized coefficients of our model and the higher the height of the bar, the more they contribute to predicting the outcomes. After analyzing the variable of importance plot, we see that the predictors with the most influence are the **taxon** of the lemur. From this, we made confidence intervals of our model to see how well our model predicts from species to species. From our plot, we can see that our model does show a difference in number of offspring between species of lemurs. Predicting the number of offspring in lemurs or any species can prove challenging due to the inherent complexity of biological systems. According to Louisville Zoo, reproductive outcomes are influenced by a many factor, encompassing genetics, environment, and social dynamics ([Louiville Zoo, 2015](https://louisvillezoo.org/animalsandplants/lemur-ring-tailed/)). Despite efforts to capture these variables in predictive models, their multifaceted interactions and nonlinear relationships often elude precise representation. Moreover, the availability and quality of data on wild populations can be limited, introducing biases and uncertainties into model predictions. Therefore, while predictive modeling offers insights into reproductive patterns, accurately forecasting the exact number of offspring remains elusive, constrained by the intricate nature of biological processes and the constraints of available data.
+
+
+```{r, warning = F, echo = F, fig.align='center'}
+DATA <- na.omit(cleaned_lemur_2) %>% crossv_kfold(10)
+train.model.func=function(data){
+  mod=lm(Offspring~log(lifespan) + Taxon + Wildness + log(Weight),data=data)
+  return(mod)
+}
+
+DATA2=DATA %>% 
+       mutate(tr.model=map(train,train.model.func))
+DATA2.PREDICT = DATA2 %>% 
+          mutate(predict=map2(test,tr.model,~augment(.y,newdata=.x))) %>%
+          select(predict) %>%
+          unnest()
+Log_Predict <- DATA2.PREDICT %>% mutate(Model = "Log Model")
+
+#this was to make a dataframe with fitted and predicted with taxon
+model_log_data <- tibble(Species = DATA2.PREDICT$Taxon,
+                         actual=DATA2.PREDICT$Offspring,predict=DATA2.PREDICT$.fitted)
+data <- gather(model_log_data, key = "Type", value = "Offspring", actual, predict)
+
+model_log <- lm(Offspring ~ log(lifespan) + Taxon + Wildness + log(Weight), data = cleaned_lemur_2)
+
+
+std_coef <- summary(model_log)$coefficients[, "Std. Error"]
+std_coef <- std_coef[-1]  
+std_coef <- sort(std_coef)
+par(mar = c(5, 10, 4, 2))
+
+barplot(abs(std_coef), names.arg = names(std_coef), main = "Variable Importance Plot",
+        xlab = "Predictor Variables", ylab = "Absolute Standardized Coefficients", las = 2, cex.names = 0.4, 
+        col = "coral4")
+```
+```{r, echo = FALSE, fig.align='center'}
+#I made the confidence intervals
+conf_intervals <- data %>%
+  group_by(Species, Type) %>%
+  summarise(lower = quantile(Offspring, 0.025), upper = quantile(Offspring, 0.975), mean = mean(Offspring), .groups = 'drop') %>%
+  ungroup()
+
+conf_intervals_predicted <- conf_intervals %>%
+  filter(Type == "predict") %>%
+  mutate(Species = reorder(Species, mean))
+
+
+ggplot(conf_intervals_predicted, aes(x = Species, y = mean, fill = Type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), alpha = 0.7) +
+  geom_errorbar(aes(ymin = lower, ymax = upper, color = Type), position = position_dodge(width = 0.75), width = 0.2) + # Add color aesthetic
+  scale_fill_manual(values = c("Predicted" = "coral4"), name = "Type") + 
+  labs(title = "Predicted Number of Offspring by Species with 95% Confidence Intervals", x = "Species", y = "Offspring") +
+  theme_gray() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(legend.position = "none")
+```
+
+# CONCLUSION
+
+> Our analysis relied on a rich dataset sourced from the Duke Lemur Center, encompassing over 80,000 entries spanning 14 different lemur species and 25 taxa. The dataset, derived from the Center's 2019 release, includes detailed information on each individual lemur, such as taxonomic classification, sex, date of birth, weight, birth institution, litter size, number of known offspring, maximum age, and wildness status. Each lemur is uniquely identified by a **DLC_ID** variable, facilitating individual-level analysis. Furthermore, predictors such as birth location, weight change over time, and parental background were meticulously curated to provide insights into environmental and genetic factors influencing lemur lifespans and reproductive success. This extensive dataset served as the foundation for our investigation into the models of lemur lifespans and number of offspring, contributing to our understanding of lemur conservation and management strategies.
+
+> Our project at The Duke Lemur Center, a pivotal institution for the conservation of some of the most endangered species worldwide, sought to enhance our understanding of factors that influence lemur lifespans and number of offsprings. We developed various models to predict lemur lifespans and number of offspring using factors such as sex, birth month, weight, and parental and environmental backgrounds. Despite these efforts, all lifespan prediction models except the empty one yielded a Mean Absolute Error (MAE) of around 5, signifying that our predictions deviate from actual lifespans by an average of five years. This level of prediction deviation, amounting to about one-third of the average lifespan, represents a significant margin in biological terms. Upon further analysis,  we found the variable **Taxon** emerged as the most significant predictor with the lowest MAE of 5.3, underscoring the impact of biological classification on lemur lifespans. A key limitation in our study was our initial oversight in fully assessing the dataset. We neglected to include date-of-death (**DOD**) as a variable in our models, partially because nearly half of the dataset contained 'N/A' values for this variable, representing animals that are either still alive or whose status is unknown. This omission led to a critical gap in our analysis, as the actual end of lifespan for these lemurs was not accounted for, potentially skewing lifespan predictions. 
+
+> Similarly, when trying to predict offspring, we faced challenges. Despite our efforts to construct predictive models for the number of offspring, our findings indicated only marginal improvement over an empty model, suggesting that the selected predictors may not fully capture the intricacies of lemur reproductive behavior. The minimal disparity in Mean Absolute Error between our best-performing model and the empty model underscores the challenges in accurately predicting lemur offspring counts. Our models provide an MAE of about 9 which means our analysis deviates about 9 offspring from the actual average number of offspring. Moreover, our analysis revealed that taxonomic classification exerted the most significant influence on offspring counts, highlighting the importance of species-specific traits in reproductive outcomes. A key limitation of our study is in our initial evaluation, we did not remove lemurs that still have possible reproductive capabilities like those that are still alive. Even with efforts to remove all lemurs outside the 95% confidence interval of the end of the reproductive age, our model still struggled to accurately capture predictions. Despite these efforts, the model's performance fell short of achieving accurate results. Other factors that could affect how our model performed are social aspects and underlying biological mechanisms driving reproduction. To improve future analyses, rigorous validation of variables is essential to ensure a holistic approach to model design and assessment. Despite these limitations, our findings are crucial for the targeted conservation efforts of lemurs. In conclusion, by pinpointing "Taxon" as a key determinant, we suggest that conservation strategies be better tailored to the specific needs of different lemur species. 
+
+
+# BIBLIOGRAPHY
+* *The IUCN Red List and the Conservation Status of Lemurs*. Lemur Conservation Network. (2023). https://www.lemurconservationnetwork.org/learn/the-iucn-red-list-and-lemurs/ 
+* Kappeler, P. M., Pethig, L., Prox, L., & Fichtel, C. (2022). Reproductive Senescence in Two Lemur Lineages. *Frontiers in Ecology and Evolution*, *10*. https://doi.org/10.3389/fevo.2022.894344 
+* *Lemur, Ring-Tailed*. Louisville Zoo. (2015). https://louisvillezoo.org/animalsandplants/lemur-ring-tailed/ 
+* Martine, P., & Aude, A. (2022). Parental Age at Conception on Mouse Lemur’s Offspring Longevity: Sex-specific Maternal Effects. *PLOS ONE*, *17*(12). https://doi.org/10.1371/journal.pone.0265783 
+* Mayne, B., Berry, O., Davies, C., Farley, J., & Jarman, S. (2019). A Genomic Predictor of Lifespan in Vertebrates. *Scientific Reports*, *9*(1). https://doi.org/10.1038/s41598-019-54447-w 
+* *Meet the Lemurs*. Duke Lemur Center. (2021). https://lemur.duke.edu/discover/meet-the-lemurs/ 
+* Schwitzer, C., & Kaumanns, W. (2009). Litter Size, Infant Mortality and Female Body Weight in Captive Black-and-White Ruffed Lemurs Varecia Variegata. *Endangered Species Research*, *8*, 201–209. https://doi.org/10.3354/esr00210 
+     
